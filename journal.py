@@ -1,16 +1,15 @@
-import json, sqlite3, time
+import os, sqlite3, time
 import config as cfg
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS opinions(id INTEGER PRIMARY KEY, ts INT, symbol TEXT, action TEXT, go INT,
  score INT, conf INT, entry REAL, sl REAL, tp REAL, atr REAL, verdict TEXT, status TEXT, pnl REAL,
  closed_ts INT, why TEXT);
-CREATE TABLE IF NOT EXISTS news(uid TEXT PRIMARY KEY, ts INT, title TEXT, link TEXT, cat TEXT,
- symbols TEXT, reaction TEXT);
 """
 
 
 def db():
+    os.makedirs(os.path.dirname(cfg.DB) or ".", exist_ok=True)
     c = sqlite3.connect(cfg.DB)
     c.row_factory = sqlite3.Row
     c.executescript(SCHEMA)
@@ -87,63 +86,3 @@ def total_pnl():
     r = c.execute("SELECT COALESCE(SUM(pnl),0) s, COUNT(*) n FROM opinions WHERE go=1 AND status!='open'").fetchone()
     c.close()
     return r["s"], r["n"]
-
-
-# ---- news ----
-def news_seen(uid):
-    c = db()
-    r = c.execute("SELECT 1 FROM news WHERE uid=?", (uid,)).fetchone()
-    c.close()
-    return bool(r)
-
-
-def news_add(uid, ts, title, link, cat, symbols):
-    c = db()
-    c.execute("INSERT OR IGNORE INTO news(uid,ts,title,link,cat,symbols) VALUES(?,?,?,?,?,?)",
-              (uid, ts, title[:200], link, cat, ",".join(symbols)))
-    c.commit()
-    c.close()
-
-
-def news_pending_reaction(older_than_s=5400):
-    c = db()
-    r = c.execute("SELECT * FROM news WHERE cat!='' AND symbols!='' AND reaction IS NULL AND ts<? AND ts>?",
-                  (int(time.time()) - older_than_s, int(time.time()) - 172800)).fetchall()
-    c.close()
-    return [dict(x) for x in r]
-
-
-def news_set_reaction(uid, reaction):
-    c = db()
-    c.execute("UPDATE news SET reaction=? WHERE uid=?", (json.dumps(reaction), uid))
-    c.commit()
-    c.close()
-
-
-def news_recent(sym, hours=6):
-    c = db()
-    r = c.execute("SELECT ts,cat,title FROM news WHERE cat!='' AND ts>? AND (','||symbols||',') LIKE ? ORDER BY ts DESC LIMIT 5",
-                  (int(time.time()) - hours * 3600, f"%,{sym},%")).fetchall()
-    c.close()
-    return [dict(x) for x in r]
-
-
-def news_today(sym, hours=24):
-    return news_recent(sym, hours)
-
-
-def similar(cat, sym, limit=12):
-    """Past reactions of `sym` to the same news category."""
-    c = db()
-    rows = c.execute("SELECT reaction FROM news WHERE cat=? AND reaction IS NOT NULL ORDER BY ts DESC LIMIT 60", (cat,)).fetchall()
-    c.close()
-    m = []
-    for r in rows:
-        x = json.loads(r["reaction"]).get(sym)
-        if x:
-            m.append(x)
-    m = m[:limit]
-    if not m:
-        return None
-    return {"n": len(m), "up_pct": round(100 * sum(1 for x in m if x["m60"] > 0) / len(m)),
-            "avg_abs_atr": round(sum(abs(x["m60"]) / x["atr"] for x in m if x["atr"]) / len(m), 2)}

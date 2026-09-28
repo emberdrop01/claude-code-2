@@ -3,19 +3,17 @@ from datetime import datetime
 import config as cfg
 import data, journal, llm, indicators as ind
 
-CACHE = {}  # symbol name -> all 30m candles (shared with news reaction study)
-
 BASE = ("You are one member of a trading desk with a shared BOARD (messages from teammates). "
-        "Use ONLY numbers in DATA. Never invent prices, news, levels or statistics. If evidence is missing, "
+        "The instrument is a Deriv synthetic index (algorithmic price, no news or fundamentals exist). Use ONLY numbers in DATA. Never invent prices, news, levels or statistics. If evidence is missing, "
         "thin (small n) or contradictory, say so and lean WAIT. Reply with ONE JSON object, no prose. ")
 PROMPT = {
-    "research": "ROLE=research. " + BASE + "Read trend, news, time-of-day stats, track record. "
+    "research": "ROLE=research. " + BASE + "Read trend, time-of-day stats, track record. "
                 'JSON: {"bias":"BUY|SELL|WAIT","conf":0-100,"notes":"<=200 chars","msg":"<=150 chars to team"}',
-    "analyst": "ROLE=analyst. " + BASE + "Quant read of EMA50/200, RSI, MACD, VWAP, ATR and the quant score; "
+    "analyst": "ROLE=analyst. " + BASE + "Quant read of EMA50/200, RSI, MACD, ATR and the quant score; "
                "confirm or challenge research. Pick stop/target in ATR multiples. "
                'JSON: {"bias":"BUY|SELL|WAIT","conf":0-100,"sl_atr":1-3,"tp_atr":1-5,"notes":"<=200 chars","msg":"<=150 chars"}',
     "red": "ROLE=red. " + BASE + "Red team: try to break the trade. Look for contradictions, exhaustion "
-           "(RSI extremes), news risk, tiny samples, past errors in track record. "
+           "(RSI extremes), spike risk on BOOM/CRASH, tiny samples, past errors in track record. "
            'JSON: {"veto":true|false,"risk":0-100,"notes":"<=200 chars","msg":"<=150 chars"}',
     "audit": "ROLE=audit. " + BASE + "Audit: check every number/claim in BOARD against DATA. Fail on any mismatch "
              "or unsupported claim. "
@@ -78,14 +76,12 @@ def decide(pack, q, atr, price):
             "blocked": [] if go else why, "out": out}
 
 
-def run_symbol(sym):
-    name, src, sid = sym
-    cs = data.fetch(src, sid, "30m", cfg.HIST)
-    CACHE[name] = cs
+def run_symbol(name):
+    cs = data.fetch(name, "30m", cfg.HIST)
     closed, live = data.split(cs, "30m")
     if len(closed) < 150:
         raise RuntimeError(f"only {len(closed)} candles (<150)")
-    f = ind.features(closed, live)
+    f = ind.features(closed)
     price = ind.sig((live or closed[-1])["c"])
     journal.resolve(name, cs, price)
     slot = ind.slot_stats(closed, cfg.TZ)
@@ -95,8 +91,7 @@ def run_symbol(sym):
             "live_candle": live and [hm(live["t"]), live["o"], live["h"], live["l"], live["c"]],
             "last6_closed[t,o,h,l,c]": [[hm(x["t"]), x["o"], x["h"], x["l"], x["c"]] for x in closed[-6:]],
             "ind": f, "slot_stats": slot, "quant": q,
-            "news_6h": [{"cat": n["cat"], "title": n["title"][:100], "hist": journal.similar(n["cat"], name)}
-                        for n in journal.news_recent(name, 6)],
+            "kind": "spike index (BOOM/CRASH)" if name.upper().startswith(("BOOM", "CRASH")) else "volatility/other synthetic",
             "track": journal.stats(name), "open_trade": journal.open_signal(name) and
             {k: journal.open_signal(name)[k] for k in ("action", "entry", "sl", "tp")}}
     r = decide(pack, q, f["atr"], price)
@@ -115,7 +110,7 @@ def fmt(name, r, f, slot, live, last, price):
     else:
         L.append(f"Candidate {r['cand']} blocked: {', '.join(r['blocked'])}")
     L.append(f"Trend {f['trend']} | EMA50 {f['ema50']} EMA200 {f['ema200']} | RSI {f['rsi'] and round(f['rsi'])} | "
-             f"MACD hist {f['macd_hist']} | VWAP {f['vwap']} | ATR {f['atr']}")
+             f"MACD hist {f['macd_hist']} | ATR {f['atr']}")
     c = live or last
     L.append(f"{'Live' if live else 'Last'} candle O{c['o']} H{c['h']} L{c['l']} C{c['c']}")
     L.append(f"Slot {slot['slot']}: n={slot['n']} up30m={slot['up1']}% avg={slot['avg1']} | up60m={slot['up2']}% avg={slot['avg2']}")
@@ -127,9 +122,8 @@ def fmt(name, r, f, slot, live, last, price):
     return "\n".join(L)
 
 
-def morning_report(sym):
-    name, src, sid = sym
-    cs = data.fetch(src, sid, "1d", 260)
+def morning_report(name):
+    cs = data.fetch(name, "1d", 260)
     closed, _ = data.split(cs, "1d")
     if len(closed) < 30:
         raise RuntimeError(f"only {len(closed)} daily candles")
@@ -139,8 +133,4 @@ def morning_report(sym):
     L = [f"{name} D1 | prev {datetime.fromtimestamp(p['t'], cfg.TZ).strftime('%d %b')}: O{p['o']} H{p['h']} L{p['l']} C{p['c']} "
          f"({ind.sig(p['c'] - p['o'])} pts)",
          f"5d net {ind.sig(n5)} | D trend {f['trend']} | EMA50 {f['ema50']} EMA200 {f['ema200']} | RSI {f['rsi'] and round(f['rsi'])} | D ATR {f['atr']}"]
-    for n in journal.news_today(name, 24):
-        t = datetime.fromtimestamp(n["ts"], cfg.TZ).strftime("%H:%M")
-        s = journal.similar(n["cat"], name)
-        L.append(f"NEWS [{n['cat']}] {t}: {n['title'][:90]}" + (f" | hist n={s['n']} up60m={s['up_pct']}% {s['avg_abs_atr']}ATR" if s else ""))
     return "\n".join(L)

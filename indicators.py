@@ -46,19 +46,7 @@ def macd(c):
     return line[-1], s[-1], line[-1] - s[-1]
 
 
-def vwap(cs):
-    """Session VWAP (UTC day). None when the feed has no volume (most spot FX, synthetics)."""
-    if not cs:
-        return None
-    day = cs[-1]["t"] // 86400
-    s = [x for x in cs if x["t"] // 86400 == day]
-    vol = sum(x["v"] for x in s)
-    if vol <= 0:
-        return None
-    return sum((x["h"] + x["l"] + x["c"]) / 3 * x["v"] for x in s) / vol
-
-
-def features(cs, live=None):
+def features(cs):
     c = [x["c"] for x in cs]
     p = c[-1]
     e50 = ema(c, 50)[-1]
@@ -66,7 +54,7 @@ def features(cs, live=None):
     m, s, h = macd(c)
     tr = "n/a" if e200 is None else ("up" if p > e50 > e200 else "down" if p < e50 < e200 else "mixed")
     f = dict(close=p, ema50=e50, ema200=e200, rsi=rsi(c), macd=m, macd_sig=s, macd_hist=h,
-             atr=atr(cs), vwap=vwap(cs + ([live] if live else [])), trend=tr)
+             atr=atr(cs), trend=tr)
     return {k: (sig(v) if isinstance(v, float) else v) for k, v in f.items()}
 
 
@@ -95,8 +83,6 @@ def quant(f, slot):
     v.append(1 if f["macd_hist"] > 0 else -1)
     if f["rsi"] is not None:
         v.append(1 if f["rsi"] > 55 else -1 if f["rsi"] < 45 else 0)
-    if f["vwap"]:
-        v.append(1 if p > f["vwap"] else -1)
     if slot and slot["n"] >= 15 and slot["up1"] is not None:
         v.append(1 if slot["up1"] > 60 else -1 if slot["up1"] < 40 else 0)
     x = sum(v) / len(v)
