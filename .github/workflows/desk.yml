@@ -27,6 +27,11 @@ jobs:
         run: |
           git clone -q --depth 1 --branch state "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" state 2>/dev/null || mkdir -p state
           rm -rf state/.git
+      - name: check deriv (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          DERIV_WS: ${{ vars.DERIV_WS }}
+        run: python check_deriv.py || true
       - name: run desk
         env:
           FORCE: ${{ github.event.inputs.force }}
