@@ -1,0 +1,10 @@
+[Unit]
+Description=AI trading desk
+After=network-online.target
+[Service]
+WorkingDirectory=/opt/desk
+ExecStart=/opt/desk/venv/bin/python -u main.py
+Restart=always
+User=ubuntu
+[Install]
+WantedBy=multi-user.target
