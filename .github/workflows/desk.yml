@@ -1,0 +1,55 @@
+name: desk
+on:
+  schedule:
+    - cron: "*/30 2-17 * * *"   # 02:00-17:30 UTC = 08:00-23:30 GMT+6 (code enforces WINDOW_START/END)
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "1 = run now, ignore window/dedupe"
+        default: "1"
+concurrency:
+  group: desk
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: restore state
+        run: |
+          git clone -q --depth 1 --branch state "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" state 2>/dev/null || mkdir -p state
+          rm -rf state/.git
+      - name: run desk
+        env:
+          FORCE: ${{ github.event.inputs.force }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          AI_PROVIDER: ${{ secrets.AI_PROVIDER }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_MODEL: ${{ secrets.AI_MODEL }}
+          SYMBOLS: ${{ vars.SYMBOLS }}
+          DERIV_WS: ${{ vars.DERIV_WS }}
+          WINDOW_START: ${{ vars.WINDOW_START }}
+          WINDOW_END: ${{ vars.WINDOW_END }}
+          MIN_CONF: ${{ vars.MIN_CONF }}
+          MIN_SCORE: ${{ vars.MIN_SCORE }}
+          HIST_CANDLES: ${{ vars.HIST_CANDLES }}
+        run: python run_once.py
+      - name: save state
+        if: always()
+        run: |
+          cd state
+          git init -q -b state
+          git config user.name desk && git config user.email desk@users.noreply.github.com
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -q -m "state"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" state
