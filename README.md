@@ -12,6 +12,10 @@ Research / Analyst / Red / Audit / Manager agents -> Telegram. Advisory only, no
 
 Change AI provider/model/symbols = edit secrets/variables in the UI. No code changes.
 
+## Deriv connection
+The Deriv public feed is a plain **WebSocket** (`wss://`), not HTTPS. No key, OTP or parameters: open the socket, then send JSON (`ticks_history`). The code auto-fixes `https://` -> `wss://`, then tries fallback endpoints, then reuses the one that works. Manual workflow runs print a `check deriv` step showing which endpoint is OK. Leave the `DERIV_WS` variable empty unless Deriv changes the URL.
+Local check: `pip install -r requirements.txt && python check_deriv.py R_100`
+
 ## Notes
 - Journal (`journal.db`, `meta.json`) is stored on the `state` branch (overwritten each run, no history bloat). Keep the repo private.
 - Cron is UTC and GitHub may delay runs 5-30+ min; that is GitHub, not a bug. Duplicate runs in one slot are skipped. Cron assumes GMT+6; if you change `TZ_OFFSET`, edit the cron hours too.
